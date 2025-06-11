@@ -31,8 +31,7 @@ export class PostController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    const walletAddress = req.user.walletAddress;
-    return this.postService.getPosts(walletAddress, page, limit);
+    return this.postService.getPosts(page, limit);
   }
 
   @UseGuards(AuthGuard('jwt'))

@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreatePostDto } from './dto/createPost.dto';
@@ -38,12 +37,11 @@ export class PostService {
     };
   }
 
-  async getPosts(walletAddress: string, page: number = 1, limit: number = 10) {
+  async getPosts(page: number = 1, limit: number = 10) {
     const skip = (page - 1) * limit;
 
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
-        where: { walletAddress: walletAddress },
         skip,
         take: limit,
         orderBy: {
@@ -56,18 +54,27 @@ export class PostService {
               username: true,
             },
           },
+          _count: {
+            select: {
+              comments: true,
+              likes: true,
+            },
+          },
         },
       }),
-      this.prisma.post.count({
-        where: { walletAddress: walletAddress },
-      }),
+      this.prisma.post.count(),
     ]);
 
     return {
       success: true,
       statusCode: 200,
       data: {
-        posts,
+        posts: posts.map(post => ({
+          ...post,
+          commentCount: post._count.comments,
+          likeCount: post._count.likes,
+          _count: undefined,
+        })),
         pagination: {
           total,
           page,
@@ -145,45 +152,72 @@ export class PostService {
       },
     });
 
+    let result;
     if (existingLike) {
-      throw new ConflictException(`You have already liked this post.`);
-    }
-
-    // Create the like
-    const createLike = await this.prisma.like.create({
-      data: {
-        post: {
-          connect: {
-            id: postId,
-          },
-        },
-        user: {
-          connect: {
+      // If like exists, remove it (dislike)
+      result = await this.prisma.like.delete({
+        where: {
+          postId_walletAddress: {
+            postId: postId,
             walletAddress: walletAddress,
           },
         },
-      },
-      include: {
-        post: {
-          select: {
-            id: true,
-            content: true,
-            timestamp: true,
+        include: {
+          post: {
+            select: {
+              id: true,
+              content: true,
+              timestamp: true,
+            },
+          },
+          user: {
+            select: {
+              walletAddress: true,
+              username: true,
+            },
           },
         },
-        user: {
-          select: {
-            walletAddress: true,
-            username: true,
+      });
+    } else {
+      // If like doesn't exist, create it
+      result = await this.prisma.like.create({
+        data: {
+          post: {
+            connect: {
+              id: postId,
+            },
+          },
+          user: {
+            connect: {
+              walletAddress: walletAddress,
+            },
           },
         },
-      },
-    });
+        include: {
+          post: {
+            select: {
+              id: true,
+              content: true,
+              timestamp: true,
+            },
+          },
+          user: {
+            select: {
+              walletAddress: true,
+              username: true,
+            },
+          },
+        },
+      });
+    }
 
     return {
       success: true,
       statusCode: 200,
-      data: createLike,
+      data: {
+        ...result,
+        action: existingLike ? 'disliked' : 'liked',
+      },
     };
   }
 
